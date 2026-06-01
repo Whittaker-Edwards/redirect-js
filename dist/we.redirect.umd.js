@@ -26,14 +26,24 @@
    * @property {boolean} [greedy=true]    Capture everything after `param=` as the URL
    *                                      (so plain target URLs may contain their own &params).
    * @property {boolean} [replace=true]   Use location.replace (no back-button entry) vs assign.
+   * @property {boolean} [forwardParams=true]  ON BY DEFAULT. Appends the page's OTHER query
+   *                                      params (everything except our redirect param) onto the
+   *                                      target URL, so UTMs/click-ids carry through the hop.
+   *                                      Opt OUT per client with data-we-forward-params="false".
+   *                                      In greedy mode only params BEFORE `r=` are forwarded
+   *                                      (params after it belong to the target URL itself).
    * @property {string}  [gtm]            GTM container id, e.g. "GTM-XXXXXXX".
    * @property {string}  [pixel]          Meta/Facebook Pixel id, e.g. "123456789012345".
    * @property {string[]} [pixels=[]]     Arbitrary custom snippets (raw <script>/<img> HTML).
-   * @property {number}  [pixelDelay=120] On a redirect WITH a pixel configured, ms to
-   *                                      wait after firing PageView + the custom "Redirect"
-   *                                      event before navigating, so the beacon can flush.
-   *                                      Set 0 to redirect immediately (fastest, least
-   *                                      reliable pixel delivery).
+   * @property {boolean} [trackRedirect=false]  OPT-IN. When true AND a pixel is set, fire a
+   *                                      PageView + custom "Redirect" event BEFORE the
+   *                                      redirect (adds `pixelDelay` ms of latency to the hop).
+   *                                      Off by default: most redirects land on a page that
+   *                                      already has the pixel, so this is only needed when a
+   *                                      client must capture the click on the redirector itself.
+   * @property {number}  [pixelDelay=120] Only used when trackRedirect is on: ms to wait after
+   *                                      firing events before navigating, so the beacon can
+   *                                      flush. Set 0 to redirect immediately (least reliable).
    * @property {boolean} [debug=false]    Emit console diagnostics.
    */
 
@@ -42,9 +52,11 @@
     param: 'r',
     greedy: true,
     replace: true,
+    forwardParams: true,
     gtm: '',
     pixel: '',
     pixels: [],
+    trackRedirect: false,
     pixelDelay: 120,
     debug: false,
   };
@@ -57,9 +69,11 @@
     param: 'data-we-param',
     greedy: 'data-we-greedy',
     replace: 'data-we-replace',
+    forwardParams: 'data-we-forward-params',
     gtm: 'data-we-gtm',
     pixel: 'data-we-pixel',
     pixels: 'data-we-pixels',
+    trackRedirect: 'data-we-track-redirect',
     pixelDelay: 'data-we-pixel-delay',
     debug: 'data-we-debug',
   };
@@ -447,33 +461,41 @@
    * @param {boolean} greedy
    * @returns {string|null}  The target URL, or null if the param is absent/empty.
    */
-  function extractTarget(search, param, greedy) {
-    if (!search || !param) return null;
-
-    // Normalize: drop a leading "?" and any trailing "#fragment".
-    let query = String(search);
+  /** Strip a leading "?" and any trailing "#fragment"; return the bare query. */
+  function normalizeQuery(search) {
+    let query = String(search || '');
     if (query[0] === '?') query = query.slice(1);
     const hashIndex = query.indexOf('#');
     if (hashIndex !== -1) query = query.slice(0, hashIndex);
-    if (!query) return null;
+    return query;
+  }
 
+  /**
+   * Locate `param=` as a real query TOKEN (at index 0, or right after an '&').
+   * @returns {number} index of the token start, or -1 if not present.
+   */
+  function findParamToken(query, param) {
     const needle = `${param}=`;
-
-    // Find `param=` as a token: at position 0, or immediately after an '&'.
-    let at = -1;
     let from = 0;
     while (from <= query.length) {
       const idx = query.indexOf(needle, from);
-      if (idx === -1) break;
-      if (idx === 0 || query[idx - 1] === '&') {
-        at = idx;
-        break;
-      }
+      if (idx === -1) return -1;
+      if (idx === 0 || query[idx - 1] === '&') return idx;
       from = idx + 1;
     }
+    return -1;
+  }
+
+  function extractTarget(search, param, greedy) {
+    if (!search || !param) return null;
+
+    const query = normalizeQuery(search);
+    if (!query) return null;
+
+    const at = findParamToken(query, param);
     if (at === -1) return null;
 
-    const valueStart = at + needle.length;
+    const valueStart = at + param.length + 1; // +1 for '='
     let rawValue;
     if (greedy) {
       // Everything to the end of the query string is the target URL.
@@ -488,6 +510,65 @@
   }
 
   /**
+   * Collect the OTHER query params (everything except our redirect `param`) so
+   * they can be forwarded onto the target URL.
+   *
+   * In greedy mode the target is "everything after `param=`", so only the params
+   * BEFORE the `param=` token are forwardable — anything after it belongs to the
+   * target URL itself. In non-greedy mode, params on both sides of `param` are
+   * forwarded.
+   *
+   * @param {string} search  location.search.
+   * @param {string} param   Our redirect param name (excluded from the result).
+   * @param {boolean} greedy
+   * @returns {string}  A query fragment WITHOUT a leading '?', e.g. "utm=x&a=1"
+   *                    (empty string if there are none).
+   */
+  function collectForwardParams(search, param, greedy) {
+    const query = normalizeQuery(search);
+    if (!query) return '';
+
+    const at = findParamToken(query, param);
+
+    let scope;
+    if (at === -1) {
+      scope = query; // our param absent — forward the whole query
+    } else if (greedy) {
+      scope = query.slice(0, at ? at - 1 : 0); // before the '&' that precedes param
+    } else {
+      const valueStart = at + param.length + 1;
+      const amp = query.indexOf('&', valueStart);
+      const before = at ? query.slice(0, at - 1) : '';
+      const after = amp === -1 ? '' : query.slice(amp + 1);
+      scope = [before, after].filter(Boolean).join('&');
+    }
+
+    // Defensively drop any stray `param=` pairs from the forwarded scope.
+    const kept = scope
+      .split('&')
+      .filter((pair) => pair && pair.split('=')[0] !== param);
+    return kept.join('&');
+  }
+
+  /**
+   * Append forwarded query params to a target URL, preserving the target's own
+   * existing query and #fragment. Uses '?' if the target has no query yet, else '&'.
+   * @param {string} target
+   * @param {string} forward  Query fragment without a leading '?'.
+   * @returns {string}
+   */
+  function mergeParams(target, forward) {
+    if (!forward) return target;
+
+    const hashIndex = target.indexOf('#');
+    const base = hashIndex === -1 ? target : target.slice(0, hashIndex);
+    const fragment = hashIndex === -1 ? '' : target.slice(hashIndex);
+
+    const sep = base.indexOf('?') === -1 ? '?' : '&';
+    return `${base}${sep}${forward}${fragment}`;
+  }
+
+  /**
    * Perform the redirect if a valid, safe target is present.
    * @param {Required<import('./config.js').WERedirectConfig>} config
    * @param {Window} [win=window]
@@ -496,7 +577,7 @@
   function maybeRedirect(config, win = (typeof window !== 'undefined' ? window : undefined)) {
     if (!win || !win.location) return false;
 
-    const target = extractTarget(win.location.search, config.param, config.greedy);
+    let target = extractTarget(win.location.search, config.param, config.greedy);
     if (!target) {
       log(config, 'no redirect param present; continuing to tracking');
       return false;
@@ -505,6 +586,16 @@
     if (!SAFE_SCHEME.test(target)) {
       log(config, 'redirect target rejected (unsafe scheme):', target);
       return false;
+    }
+
+    // Optionally forward the page's other query params (everything except our
+    // redirect param) onto the target — e.g. carry UTMs/click ids through the hop.
+    if (config.forwardParams) {
+      const forward = collectForwardParams(win.location.search, config.param, config.greedy);
+      if (forward) {
+        target = mergeParams(target, forward);
+        log(config, 'forwarded params onto target:', forward);
+      }
     }
 
     const go = () => {
@@ -520,11 +611,13 @@
       }
     };
 
-    // If a Meta Pixel is configured, fire PageView + a custom "Redirect" event
-    // BEFORE navigating, so every ad click is captured regardless of destination.
-    // We then redirect after a brief delay so the beacon has time to leave the
-    // browser (navigation can cancel an in-flight pixel request).
-    if (config.pixel) {
+    // OPT-IN (config.trackRedirect): when a Meta Pixel is configured, fire
+    // PageView + a custom "Redirect" event BEFORE navigating, so the click is
+    // captured on the redirector itself regardless of destination. We then
+    // redirect after a brief delay so the beacon can leave the browser
+    // (navigation can cancel an in-flight pixel request). Off by default —
+    // most redirects land on a page that already carries the pixel.
+    if (config.trackRedirect && config.pixel) {
       const doc = win.document;
       const fired = doc
         ? firePixelRedirectEvents(config.pixel, win.location.href, target, doc)

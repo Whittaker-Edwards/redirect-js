@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extractTarget, maybeRedirect } from '../src/redirect.js';
+import { extractTarget, maybeRedirect, collectForwardParams, mergeParams } from '../src/redirect.js';
 
 test('greedy: captures full target URL including its own query params', () => {
   const target = extractTarget('?r=https://example.com/p?a=1&b=2', 'r', true);
@@ -35,6 +35,54 @@ test('matches the param when it is not first in the query', () => {
 test('percent-encoded target is decoded', () => {
   const target = extractTarget('?r=https%3A%2F%2Fexample.com%2Fp', 'r', true);
   assert.equal(target, 'https://example.com/p');
+});
+
+// --- Param forwarding --------------------------------------------------------
+
+test('collectForwardParams (greedy): only params BEFORE r= are forwarded', () => {
+  // Everything after r= belongs to the target URL itself.
+  assert.equal(collectForwardParams('?utm=x&fbclid=abc&r=https://d.com/p?a=1', 'r', true), 'utm=x&fbclid=abc');
+});
+
+test('collectForwardParams (greedy): none before r=', () => {
+  assert.equal(collectForwardParams('?r=https://d.com/p', 'r', true), '');
+});
+
+test('collectForwardParams (non-greedy): params on both sides forwarded', () => {
+  assert.equal(collectForwardParams('?utm=x&r=https://d.com&gclid=y', 'r', false), 'utm=x&gclid=y');
+});
+
+test('collectForwardParams: param absent forwards the whole query', () => {
+  assert.equal(collectForwardParams('?utm=x&a=1', 'r', true), 'utm=x&a=1');
+});
+
+test('mergeParams: uses ? when target has no query, & when it does', () => {
+  assert.equal(mergeParams('https://d.com/p', 'utm=x'), 'https://d.com/p?utm=x');
+  assert.equal(mergeParams('https://d.com/p?a=1', 'utm=x'), 'https://d.com/p?a=1&utm=x');
+});
+
+test('mergeParams: preserves the target fragment', () => {
+  assert.equal(mergeParams('https://d.com/p?a=1#sec', 'utm=x'), 'https://d.com/p?a=1#sec'.replace('#sec', '&utm=x#sec'));
+});
+
+test('mergeParams: empty forward returns target unchanged', () => {
+  assert.equal(mergeParams('https://d.com/p', ''), 'https://d.com/p');
+});
+
+test('maybeRedirect with forwardParams merges other params onto target', () => {
+  const calls = [];
+  const win = { location: { search: '?utm=spring&r=https://dest.com/o?x=1', replace: (u) => calls.push(u) } };
+  const result = maybeRedirect({ param: 'r', greedy: true, replace: true, forwardParams: true, debug: false }, win);
+  assert.equal(result, true);
+  assert.deepEqual(calls, ['https://dest.com/o?x=1&utm=spring']);
+});
+
+test('maybeRedirect without forwardParams leaves target untouched', () => {
+  const calls = [];
+  const win = { location: { search: '?utm=spring&r=https://dest.com/o', replace: (u) => calls.push(u) } };
+  const result = maybeRedirect({ param: 'r', greedy: true, replace: true, forwardParams: false, debug: false }, win);
+  assert.equal(result, true);
+  assert.deepEqual(calls, ['https://dest.com/o']);
 });
 
 test('maybeRedirect uses location.replace for a safe target', () => {

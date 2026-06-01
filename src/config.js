@@ -13,6 +13,12 @@
  * @property {boolean} [greedy=true]    Capture everything after `param=` as the URL
  *                                      (so plain target URLs may contain their own &params).
  * @property {boolean} [replace=true]   Use location.replace (no back-button entry) vs assign.
+ * @property {boolean} [forwardParams=true]  ON BY DEFAULT. Appends the page's OTHER query
+ *                                      params (everything except our redirect param) onto the
+ *                                      target URL, so UTMs/click-ids carry through the hop.
+ *                                      Opt OUT per client with data-we-forward-params="false".
+ *                                      In greedy mode only params BEFORE `r=` are forwarded
+ *                                      (params after it belong to the target URL itself).
  * @property {string}  [gtm]            GTM container id, e.g. "GTM-XXXXXXX".
  * @property {string}  [pixel]          Meta/Facebook Pixel id, e.g. "123456789012345".
  * @property {string[]} [pixels=[]]     Arbitrary custom snippets (raw <script>/<img> HTML).
@@ -33,6 +39,7 @@ export const DEFAULTS = {
   param: 'r',
   greedy: true,
   replace: true,
+  forwardParams: true,
   gtm: '',
   pixel: '',
   pixels: [],
@@ -49,6 +56,7 @@ export const ATTR_MAP = {
   param: 'data-we-param',
   greedy: 'data-we-greedy',
   replace: 'data-we-replace',
+  forwardParams: 'data-we-forward-params',
   gtm: 'data-we-gtm',
   pixel: 'data-we-pixel',
   pixels: 'data-we-pixels',
