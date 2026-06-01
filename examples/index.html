@@ -13,13 +13,17 @@
       No-redirect:    open without the param to see tracking injection instead.
     -->
 
-    <!-- Local build -->
+    <!-- Local build.
+         Param forwarding is ON by default (UTMs/click ids carry to the target);
+         add data-we-forward-params="false" to disable. Firing a pixel on the
+         redirect itself is OPT-IN via data-we-track-redirect="true". -->
     <script
       src="../dist/we.redirect.min.js"
       data-we-param="r"
       data-we-gtm="GTM-XXXXXXX"
       data-we-pixel="000000000000000"
       data-we-pixels='[]'
+      data-we-track-redirect="false"
       data-we-debug="true"></script>
 
     <!-- Or via CDN (after publish):
