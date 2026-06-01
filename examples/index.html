@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WE Redirect — example landing page</title>
+
+    <!--
+      Config is read from the data-we-* attributes on the script tag itself —
+      no inline JS needed. Place this as early in <head> as possible so the
+      redirect fires before the rest of the page renders.
+
+      Redirect test:  open this page with  ?r=https://example.com/target?utm=1&foo=bar
+      No-redirect:    open without the param to see tracking injection instead.
+    -->
+
+    <!-- Local build -->
+    <script
+      src="../dist/we.redirect.min.js"
+      data-we-param="r"
+      data-we-gtm="GTM-XXXXXXX"
+      data-we-pixel="000000000000000"
+      data-we-pixels='[]'
+      data-we-debug="true"></script>
+
+    <!-- Or via CDN (after publish):
+    <script
+      src="https://cdn.jsdelivr.net/npm/@whittaker-edwards/redirect-js/dist/we.redirect.min.js"
+      data-we-param="r"
+      data-we-gtm="GTM-XXXXXXX"
+      data-we-pixel="000000000000000"></script>
+    -->
+  </head>
+  <body>
+    <h1>WE Redirect example</h1>
+    <p>
+      If you reached this content, no <code>?r=</code> parameter was present and
+      tracking injection ran instead of a redirect.
+    </p>
+  </body>
+</html>

@@ -1,0 +1,70 @@
+{
+  "name": "@whittaker-edwards/redirect-js",
+  "version": "0.1.0",
+  "description": "Seamless URL-parameter redirect with fallback GTM/Pixel tracking injection. Attach to a landing page so Facebook/Meta ads referenced by Post ID can redirect via a URL parameter without altering the ad.",
+  "keywords": [
+    "redirect",
+    "url-parameter",
+    "facebook-ads",
+    "meta-ads",
+    "gtm",
+    "google-tag-manager",
+    "meta-pixel",
+    "facebook-pixel",
+    "tracking",
+    "whittaker-edwards"
+  ],
+  "author": "Whittaker & Edwards",
+  "license": "UNLICENSED",
+  "private": false,
+  "homepage": "https://github.com/Whittaker-Edwards/redirect-js#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Whittaker-Edwards/redirect-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Whittaker-Edwards/redirect-js/issues"
+  },
+  "type": "module",
+  "main": "dist/we.redirect.umd.js",
+  "module": "dist/we.redirect.esm.js",
+  "browser": "dist/we.redirect.min.js",
+  "unpkg": "dist/we.redirect.min.js",
+  "jsdelivr": "dist/we.redirect.min.js",
+  "exports": {
+    ".": {
+      "import": "./dist/we.redirect.esm.js",
+      "require": "./dist/we.redirect.umd.js",
+      "default": "./dist/we.redirect.umd.js"
+    },
+    "./min": "./dist/we.redirect.min.js"
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "dist/we.redirect.min.js"
+  ],
+  "scripts": {
+    "build": "gulp build",
+    "clean": "gulp clean",
+    "watch": "gulp watch",
+    "test": "node --test \"test/**/*.test.js\"",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.3.0",
+    "del": "^7.1.0",
+    "gulp": "^5.0.0",
+    "gulp-header": "^2.0.9",
+    "gulp-rename": "^2.0.0",
+    "gulp-terser": "^2.1.0",
+    "rollup": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

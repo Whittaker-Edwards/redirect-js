@@ -1,0 +1,11 @@
+node_modules/
+*.log
+npm-debug.log*
+.DS_Store
+.env
+.cache/
+coverage/
+
+# NOTE: dist/ is intentionally committed so jsDelivr/GitHub can serve
+# we_redirect.min.js directly from the repo (the "host on a CDN" use case).
+# If you'd rather only publish builds to npm, add `dist/` here.
