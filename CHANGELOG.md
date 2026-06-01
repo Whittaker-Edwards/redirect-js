@@ -14,7 +14,9 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **Tracking injection** (`src/tracking.js`): GTM container, Meta/Facebook Pixel, and arbitrary custom snippet injection via real DOM nodes (no `document.write`), idempotent and `<noscript>`-fallback-complete.
 - **Config** (`src/config.js`): type-coerced merge of `data-we-*` attributes / `init(config)` onto defaults, JSON-array `pixels`, gated debug logger.
 - Browser auto-run that stays inert under npm/bundler imports.
-- 23 dependency-free `node:test` cases (fake DOM/window).
+- **Param forwarding** (`forwardParams`, default ON; `data-we-forward-params`): carries the page's other query params (UTMs, click ids) onto the redirect target. Greedy mode forwards only params before `r=`; `collectForwardParams`/`mergeParams` preserve the target's own query + fragment.
+- **Track-the-redirect** (opt in: `trackRedirect` / `data-we-track-redirect`, default OFF): fires a Meta `PageView` + custom `Redirect` event `{ source_url, redirect_url }` before navigating, deferred by `pixelDelay` ms (default 120) so the beacon flushes. `pixelDelay` / `data-we-pixel-delay` configurable.
+- 35 dependency-free `node:test` cases (fake DOM/window).
 - Agent/contributor docs under `.claude/`.
 
 ## [0.1.0] - scaffold
