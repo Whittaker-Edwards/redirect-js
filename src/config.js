@@ -31,8 +31,25 @@
  * @property {number}  [pixelDelay=120] Only used when trackRedirect is on: ms to wait after
  *                                      firing events before navigating, so the beacon can
  *                                      flush. Set 0 to redirect immediately (least reliable).
+ * @property {string[]} [preserve]      Click-id params to carry onto the target NO MATTER
+ *                                      WHAT — regardless of forwardParams and regardless of
+ *                                      whether they appeared before or after `r=`. These are
+ *                                      appended by the ad platform at click time, so their
+ *                                      position is out of our control. Default covers the major
+ *                                      ad-network click ids (see CLICK_ID_PARAMS). De-duped
+ *                                      against the target so nothing is doubled.
  * @property {boolean} [debug=false]    Emit console diagnostics.
  */
+
+/**
+ * Default ad-network click-id params to always preserve across the redirect.
+ * - fbclid : Meta/Facebook click id (appended by FB at click time).
+ * - gclid  : Google Ads click id (standard).
+ * - gbraid / wbraid : Google Ads click ids for iOS app/web journeys introduced
+ *            alongside privacy changes; one or the other appears depending on
+ *            the click context, so we preserve both.
+ */
+export const CLICK_ID_PARAMS = ['fbclid', 'gclid', 'gbraid', 'wbraid'];
 
 /** @type {Required<WERedirectConfig>} */
 export const DEFAULTS = {
@@ -40,6 +57,7 @@ export const DEFAULTS = {
   greedy: true,
   replace: true,
   forwardParams: true,
+  preserve: CLICK_ID_PARAMS.slice(),
   gtm: '',
   pixel: '',
   pixels: [],
@@ -57,6 +75,7 @@ export const ATTR_MAP = {
   greedy: 'data-we-greedy',
   replace: 'data-we-replace',
   forwardParams: 'data-we-forward-params',
+  preserve: 'data-we-preserve',
   gtm: 'data-we-gtm',
   pixel: 'data-we-pixel',
   pixels: 'data-we-pixels',
@@ -97,6 +116,12 @@ export function readScriptConfig(scriptEl) {
       } catch {
         out.pixels = [];
       }
+    } else if (key === 'preserve') {
+      // Comma-separated list of param names, e.g. "fbclid,gclid".
+      out.preserve = String(raw || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
     } else if (typeof DEFAULTS[key] === 'boolean') {
       out[key] = parseBool(raw, DEFAULTS[key]);
     } else if (typeof DEFAULTS[key] === 'number') {
@@ -128,6 +153,10 @@ export function resolveConfig(override) {
 
     if (key === 'pixels') {
       config.pixels = Array.isArray(value) ? value.map(String) : DEFAULTS.pixels;
+    } else if (key === 'preserve') {
+      // Accept an array (npm) or a comma-separated string (attribute passthrough).
+      const list = Array.isArray(value) ? value : String(value).split(',');
+      config.preserve = list.map((s) => String(s).trim()).filter(Boolean);
     } else if (typeof DEFAULTS[key] === 'boolean') {
       config[key] = typeof value === 'boolean' ? value : parseBool(value, DEFAULTS[key]);
     } else if (typeof DEFAULTS[key] === 'number') {

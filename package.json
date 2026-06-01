@@ -1,6 +1,6 @@
 {
   "name": "@whittaker-edwards/redirect-js",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Seamless URL-parameter redirect with fallback GTM/Pixel tracking injection. Attach to a landing page so Facebook/Meta ads referenced by Post ID can redirect via a URL parameter without altering the ad.",
   "keywords": [
     "redirect",

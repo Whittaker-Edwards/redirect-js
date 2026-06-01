@@ -14,9 +14,11 @@
     -->
 
     <!-- Local build.
-         Param forwarding is ON by default (UTMs/click ids carry to the target);
-         add data-we-forward-params="false" to disable. Firing a pixel on the
-         redirect itself is OPT-IN via data-we-track-redirect="true". -->
+         Param forwarding is ON by default (UTMs carry to the target); add
+         data-we-forward-params="false" to disable. Ad-network click ids
+         (fbclid, gclid, gbraid, wbraid) are ALWAYS preserved onto the target no
+         matter where they appear — override the list with data-we-preserve.
+         Firing a pixel on the redirect itself is OPT-IN (data-we-track-redirect). -->
     <script
       src="../dist/we.redirect.min.js"
       data-we-param="r"

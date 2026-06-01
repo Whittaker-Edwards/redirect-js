@@ -5,6 +5,11 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-01
+
+First public release. The configuration surface below is the stable v1 API;
+breaking changes will require a v2.
+
 ### Added
 
 - Project scaffolding: `package.json`, gulp build pipeline (ESM + UMD + minified IIFE), and source module layout (`src/index.js`, `src/config.js`, `src/redirect.js`, `src/tracking.js`).
@@ -15,8 +20,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **Config** (`src/config.js`): type-coerced merge of `data-we-*` attributes / `init(config)` onto defaults, JSON-array `pixels`, gated debug logger.
 - Browser auto-run that stays inert under npm/bundler imports.
 - **Param forwarding** (`forwardParams`, default ON; `data-we-forward-params`): carries the page's other query params (UTMs, click ids) onto the redirect target. Greedy mode forwards only params before `r=`; `collectForwardParams`/`mergeParams` preserve the target's own query + fragment.
+- **Well-formed query merge**: the final redirect URL always uses a single `?`, contains each param at most once (no duplicates), and on a name conflict the destination URL's value wins over an incidental landing-page param. Most-recent source value wins among forwarded/preserved candidates. (`mergeParams` is the single normalization point.)
 - **Track-the-redirect** (opt in: `trackRedirect` / `data-we-track-redirect`, default OFF): fires a Meta `PageView` + custom `Redirect` event `{ source_url, redirect_url }` before navigating, deferred by `pixelDelay` ms (default 120) so the beacon flushes. `pixelDelay` / `data-we-pixel-delay` configurable.
-- 35 dependency-free `node:test` cases (fake DOM/window).
+- **Ad-network click-id preservation** (`preserve` / `data-we-preserve`, default `fbclid,gclid,gbraid,wbraid`): these ids are appended by the ad platform at click time, so they're carried onto the target unconditionally — regardless of `forwardParams` and of whether they land before or after `r=` — and de-duped so they're never doubled. Covers Meta (`fbclid`) and Google Ads (`gclid` + the iOS-privacy `gbraid`/`wbraid`). `findParamValue`/`preserveParams` in redirect.js.
+- 49 dependency-free `node:test` cases (fake DOM/window).
 - Agent/contributor docs under `.claude/`.
 
 ## [0.1.0] - scaffold

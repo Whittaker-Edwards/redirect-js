@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extractTarget, maybeRedirect, collectForwardParams, mergeParams } from '../src/redirect.js';
+import { extractTarget, maybeRedirect, collectForwardParams, mergeParams, findParamValue, preserveParams } from '../src/redirect.js';
+import { CLICK_ID_PARAMS } from '../src/config.js';
 
 test('greedy: captures full target URL including its own query params', () => {
   const target = extractTarget('?r=https://example.com/p?a=1&b=2', 'r', true);
@@ -56,17 +57,34 @@ test('collectForwardParams: param absent forwards the whole query', () => {
   assert.equal(collectForwardParams('?utm=x&a=1', 'r', true), 'utm=x&a=1');
 });
 
-test('mergeParams: uses ? when target has no query, & when it does', () => {
-  assert.equal(mergeParams('https://d.com/p', 'utm=x'), 'https://d.com/p?utm=x');
-  assert.equal(mergeParams('https://d.com/p?a=1', 'utm=x'), 'https://d.com/p?a=1&utm=x');
+test('mergeParams: appends with ? to a target that has no query', () => {
+  assert.equal(mergeParams('https://d.com/p', [['utm', 'x']]), 'https://d.com/p?utm=x');
+});
+
+test('mergeParams: merges into the target existing query', () => {
+  assert.equal(mergeParams('https://d.com/p?a=1', [['utm', 'x']]), 'https://d.com/p?a=1&utm=x');
+});
+
+test('mergeParams: normalizes a stray leading & to ? (greedy-swallowed query)', () => {
+  // Greedy can produce "path&fbclid=1" with no '?'; output must use '?'.
+  assert.equal(mergeParams('https://d.com/p&fbclid=1', []), 'https://d.com/p?fbclid=1');
+});
+
+test('mergeParams: target param is authoritative; addition does not override it', () => {
+  // Destination-wins: an addition for a key the target already has is ignored.
+  assert.equal(mergeParams('https://d.com/p?fbclid=keep', [['fbclid', 'ignored']]), 'https://d.com/p?fbclid=keep');
+  // ...but an addition for a NEW key is appended.
+  assert.equal(mergeParams('https://d.com/p?a=1', [['b', '2']]), 'https://d.com/p?a=1&b=2');
+  // A key duplicated WITHIN the target query collapses to its last value.
+  assert.equal(mergeParams('https://d.com/p?a=1&a=2', []), 'https://d.com/p?a=2');
 });
 
 test('mergeParams: preserves the target fragment', () => {
-  assert.equal(mergeParams('https://d.com/p?a=1#sec', 'utm=x'), 'https://d.com/p?a=1#sec'.replace('#sec', '&utm=x#sec'));
+  assert.equal(mergeParams('https://d.com/p?a=1#sec', [['utm', 'x']]), 'https://d.com/p?a=1&utm=x#sec');
 });
 
-test('mergeParams: empty forward returns target unchanged', () => {
-  assert.equal(mergeParams('https://d.com/p', ''), 'https://d.com/p');
+test('mergeParams: no additions and no query returns target unchanged', () => {
+  assert.equal(mergeParams('https://d.com/p', []), 'https://d.com/p');
 });
 
 test('maybeRedirect with forwardParams merges other params onto target', () => {
@@ -83,6 +101,102 @@ test('maybeRedirect without forwardParams leaves target untouched', () => {
   const result = maybeRedirect({ param: 'r', greedy: true, replace: true, forwardParams: false, debug: false }, win);
   assert.equal(result, true);
   assert.deepEqual(calls, ['https://dest.com/o']);
+});
+
+// --- Click-id preservation (fbclid / gclid / gbraid / wbraid) ---------------
+
+test('findParamValue finds a param BEFORE r=', () => {
+  assert.equal(findParamValue('?fbclid=abc&r=https://d.com/p', 'fbclid'), 'abc');
+});
+
+test('findParamValue finds a param AFTER r= (greedy-swallowed position)', () => {
+  // FB may append fbclid after our param; findParamValue still locates it.
+  assert.equal(findParamValue('?r=https://d.com/p&fbclid=xyz', 'fbclid'), 'xyz');
+});
+
+test('findParamValue returns null when absent', () => {
+  assert.equal(findParamValue('?r=https://d.com/p', 'fbclid'), null);
+});
+
+test('preserveParams appends a missing click id', () => {
+  const out = preserveParams('https://d.com/p', '?fbclid=abc&r=https://d.com/p', ['fbclid']);
+  assert.equal(out, 'https://d.com/p?fbclid=abc');
+});
+
+test('preserveParams does NOT duplicate a click id already on the target', () => {
+  // Greedy already swallowed fbclid into the target -> must not append a 2nd.
+  const out = preserveParams('https://d.com/p?fbclid=xyz', '?r=https://d.com/p&fbclid=xyz', ['fbclid']);
+  assert.equal(out, 'https://d.com/p?fbclid=xyz');
+});
+
+test('CLICK_ID_PARAMS covers the major ad-network click ids', () => {
+  assert.deepEqual(CLICK_ID_PARAMS, ['fbclid', 'gclid', 'gbraid', 'wbraid']);
+});
+
+test('maybeRedirect preserves fbclid that lands AFTER r=, normalizing & to ?', () => {
+  const calls = [];
+  // Greedy swallows fbclid into the target as "...o&fbclid=abc"; preserve must
+  // not dup it AND the stray '&' must be normalized to '?'.
+  const win = { location: { search: '?r=https://dest.com/o&fbclid=abc', replace: (u) => calls.push(u) } };
+  maybeRedirect(
+    { param: 'r', greedy: true, replace: true, forwardParams: false, preserve: ['fbclid'], debug: false },
+    win
+  );
+  assert.deepEqual(calls, ['https://dest.com/o?fbclid=abc']);
+});
+
+test('maybeRedirect preserves a gclid that lands BEFORE r= with forwarding off', () => {
+  const calls = [];
+  const win = { location: { search: '?gclid=g123&r=https://dest.com/o', replace: (u) => calls.push(u) } };
+  maybeRedirect(
+    { param: 'r', greedy: true, replace: true, forwardParams: false, preserve: ['gclid'], debug: false },
+    win
+  );
+  assert.deepEqual(calls, ['https://dest.com/o?gclid=g123']);
+});
+
+test('maybeRedirect: forwarded fbclid (before r=) is not doubled by preserve', () => {
+  const calls = [];
+  const win = { location: { search: '?fbclid=abc&r=https://dest.com/o', replace: (u) => calls.push(u) } };
+  maybeRedirect(
+    { param: 'r', greedy: true, replace: true, forwardParams: true, preserve: ['fbclid'], debug: false },
+    win
+  );
+  // forwarded once; preserve resolves the same value -> de-duped to one.
+  assert.deepEqual(calls, ['https://dest.com/o?fbclid=abc']);
+});
+
+// Regression: the exact URL from the bug report — fbclid both BEFORE and AFTER
+// r=. Expect a single, proper '?', no duplicate, and the MOST RECENT value (123).
+test('maybeRedirect: duplicate param before & after r= -> one ?, most recent wins', () => {
+  const calls = [];
+  const win = {
+    location: {
+      search: '?fbclid=321&r=https://go.enduramind.net/test&fbclid=123',
+      replace: (u) => calls.push(u),
+    },
+  };
+  maybeRedirect(
+    { param: 'r', greedy: true, replace: true, forwardParams: true, preserve: ['fbclid'], debug: false },
+    win
+  );
+  assert.deepEqual(calls, ['https://go.enduramind.net/test?fbclid=123']);
+});
+
+// The same de-dup / most-recent / single-? rule applies to ANY param, not just
+// click ids — here a non-click-id `pid` appears twice via forwarding + target.
+test('maybeRedirect: dedup + most-recent applies to all forwarded params', () => {
+  const calls = [];
+  const win = {
+    location: { search: '?pid=old&r=https://dest.com/p?pid=new', replace: (u) => calls.push(u) },
+  };
+  maybeRedirect(
+    { param: 'r', greedy: true, replace: true, forwardParams: true, preserve: [], debug: false },
+    win
+  );
+  // pid=new is authored into the target; pid=old is an incidental landing-page
+  // param. Destination wins -> the forwarded pid=old does not override it.
+  assert.deepEqual(calls, ['https://dest.com/p?pid=new']);
 });
 
 test('maybeRedirect uses location.replace for a safe target', () => {

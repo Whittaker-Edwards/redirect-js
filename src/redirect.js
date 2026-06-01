@@ -66,6 +66,25 @@ function findParamToken(query, param) {
   return -1;
 }
 
+/**
+ * Parse a bare query fragment ("a=1&b=2", no leading '?') into ordered
+ * [key, value] pairs. Empty/keyless segments are skipped.
+ * @param {string} query
+ * @returns {Array<[string,string]>}
+ */
+function queryToPairs(query) {
+  if (!query) return [];
+  const pairs = [];
+  for (const seg of String(query).split('&')) {
+    if (!seg) continue;
+    const eq = seg.indexOf('=');
+    const key = eq === -1 ? seg : seg.slice(0, eq);
+    const val = eq === -1 ? '' : seg.slice(eq + 1);
+    if (key) pairs.push([key, val]);
+  }
+  return pairs;
+}
+
 export function extractTarget(search, param, greedy) {
   if (!search || !param) return null;
 
@@ -131,21 +150,109 @@ export function collectForwardParams(search, param, greedy) {
 }
 
 /**
- * Append forwarded query params to a target URL, preserving the target's own
- * existing query and #fragment. Uses '?' if the target has no query yet, else '&'.
+ * Find a single param's raw value ANYWHERE in a query string, regardless of
+ * position — including when it sits after our `r=` token (and would otherwise
+ * have been swallowed into the greedy target). Matches only as a real token
+ * (start, or after '&'). Returns the LAST occurrence's value (most recent wins),
+ * or null if absent.
+ * @param {string} search  location.search.
+ * @param {string} name
+ * @returns {string|null}
+ */
+export function findParamValue(search, name) {
+  const query = normalizeQuery(search);
+  if (!query || !name) return null;
+
+  const needle = `${name}=`;
+  let value = null;
+  let from = 0;
+  while (from <= query.length) {
+    const idx = query.indexOf(needle, from);
+    if (idx === -1) break;
+    if (idx === 0 || query[idx - 1] === '&') {
+      const valueStart = idx + needle.length;
+      const amp = query.indexOf('&', valueStart);
+      value = amp === -1 ? query.slice(valueStart) : query.slice(valueStart, amp);
+    }
+    from = idx + 1;
+  }
+  return value === '' ? null : value;
+}
+
+/**
+ * Append params to a target URL while keeping the result well-formed:
+ *   - Splits target into base + its own query + #fragment.
+ *   - Normalizes the delimiter: the query always starts with '?', even if the
+ *     target arrived with a stray leading '&' (the greedy "...path&fbclid=..."
+ *     case where the URL had no '?').
+ *   - Merges the target's own params with `additions`. The TARGET'S OWN params
+ *     are authoritative: an addition only fills in a key the target lacks (so a
+ *     value the client deliberately wrote into the destination URL wins over an
+ *     incidental same-named param from the landing page). Within the target's
+ *     own query, a duplicated key collapses to its LAST value.
+ *   - Rebuilds a clean "?a=1&b=2" query.
+ *
  * @param {string} target
- * @param {string} forward  Query fragment without a leading '?'.
+ * @param {Array<[string,string]>} additions  Ordered [key,value] pairs to add.
  * @returns {string}
  */
-export function mergeParams(target, forward) {
-  if (!forward) return target;
-
+export function mergeParams(target, additions) {
   const hashIndex = target.indexOf('#');
-  const base = hashIndex === -1 ? target : target.slice(0, hashIndex);
+  const beforeHash = hashIndex === -1 ? target : target.slice(0, hashIndex);
   const fragment = hashIndex === -1 ? '' : target.slice(hashIndex);
 
-  const sep = base.indexOf('?') === -1 ? '?' : '&';
-  return `${base}${sep}${forward}${fragment}`;
+  // Split the target's own query off its base. The query begins at the first
+  // '?' OR (if none) the first '&' — the latter handles the greedy stray-'&'.
+  let qStart = beforeHash.indexOf('?');
+  if (qStart === -1) qStart = beforeHash.indexOf('&');
+  const base = qStart === -1 ? beforeHash : beforeHash.slice(0, qStart);
+  const targetQuery = qStart === -1 ? '' : beforeHash.slice(qStart + 1);
+
+  const order = [];
+  const byKey = new Map();
+  const set = (key, val) => {
+    if (!key) return;
+    if (!byKey.has(key)) order.push(key);
+    byKey.set(key, val);
+  };
+
+  // 1) Target's own params first. A duplicate key here collapses LAST-wins.
+  for (const seg of targetQuery.split('&')) {
+    if (!seg) continue;
+    const eq = seg.indexOf('=');
+    set(eq === -1 ? seg : seg.slice(0, eq), eq === -1 ? '' : seg.slice(eq + 1));
+  }
+  // 2) Additions only fill in keys the target does NOT already have.
+  for (const [k, v] of additions || []) {
+    if (k && !byKey.has(k)) set(k, v);
+  }
+
+  if (order.length === 0) return `${base}${fragment}`;
+  const query = order.map((k) => `${k}=${byKey.get(k)}`).join('&');
+  return `${base}?${query}${fragment}`;
+}
+
+/**
+ * Carry each named param from the current page onto the target URL, regardless
+ * of where it appeared in the source query (before OR after `r=`). For ad-network
+ * click ids (fbclid, gclid, …) whose position is set by the ad platform. The
+ * most-recent source value wins, and mergeParams de-dupes so the target is never
+ * left with two copies.
+ * @param {string} target   The (already extracted) redirect target URL.
+ * @param {string} search   location.search.
+ * @param {string[]} names  Param names to preserve, e.g. ["fbclid"].
+ * @returns {string} target with each preserved param present exactly once.
+ */
+export function preserveParams(target, search, names) {
+  if (!Array.isArray(names) || names.length === 0) return target;
+
+  const additions = [];
+  for (const name of names) {
+    if (!name) continue;
+    const value = findParamValue(search, name);
+    if (value != null) additions.push([name, value]);
+  }
+  return additions.length ? mergeParams(target, additions) : target;
 }
 
 /**
@@ -170,11 +277,38 @@ export function maybeRedirect(config, win = (typeof window !== 'undefined' ? win
 
   // Optionally forward the page's other query params (everything except our
   // redirect param) onto the target — e.g. carry UTMs/click ids through the hop.
+  // mergeParams normalizes the target's delimiter (stray '&' -> '?') and de-dupes
+  // by key (last wins), so even with nothing forwarded we may want to clean up a
+  // greedy-swallowed query — but to stay conservative we only merge when we have
+  // params to add.
   if (config.forwardParams) {
     const forward = collectForwardParams(win.location.search, config.param, config.greedy);
-    if (forward) {
-      target = mergeParams(target, forward);
-      log(config, 'forwarded params onto target:', forward);
+    // Resolve each forwarded key to its LAST occurrence across the whole source
+    // query (not just the sliced scope), so "most recent wins" holds even when a
+    // key appears both before and after `r=`.
+    const seen = new Set();
+    const pairs = [];
+    for (const [key] of queryToPairs(forward)) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const value = findParamValue(win.location.search, key);
+      if (value != null) pairs.push([key, value]);
+    }
+    if (pairs.length) {
+      target = mergeParams(target, pairs);
+      log(config, 'forwarded params onto target:', pairs.map(([k, v]) => `${k}=${v}`).join('&'));
+    }
+  }
+
+  // ALWAYS preserve click ids (e.g. fbclid) that the ad platform appends at click
+  // time, regardless of forwardParams or where they landed relative to `r=`.
+  // mergeParams de-dupes (last wins), so a value swallowed into the greedy target
+  // and the same id elsewhere collapse to one — the most recent.
+  if (config.preserve && config.preserve.length) {
+    const withClickIds = preserveParams(target, win.location.search, config.preserve);
+    if (withClickIds !== target) {
+      log(config, 'preserved click ids onto target:', config.preserve.join(','));
+      target = withClickIds;
     }
   }
 

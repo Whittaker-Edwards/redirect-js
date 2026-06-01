@@ -61,7 +61,8 @@ init({ param: 'r', gtm: 'GTM-XXXXXXX', pixel: '000000000000000' });
 | `param`         | `string`   | `"r"`   | Query param carrying the target URL.                               |
 | `greedy`        | `boolean`  | `true`  | Capture everything after `param=` as the URL (plain URLs w/ params). |
 | `replace`       | `boolean`  | `true`  | Use `location.replace` (no history entry) vs assign.               |
-| `forwardParams` | `boolean`  | `true`  | Append the page's OTHER query params (UTMs, click ids, …) onto the redirect target. Opt out with `false`. |
+| `forwardParams` | `boolean`  | `true`  | Append the page's OTHER query params (UTMs, …) onto the redirect target. Opt out with `false`. |
+| `preserve`      | `string[]` | `["fbclid","gclid","gbraid","wbraid"]` | Ad-network click ids carried onto the target **always** — regardless of `forwardParams` and of whether they land before or after `r=`. |
 | `gtm`           | `string`   | `""`    | GTM container id, e.g. `GTM-XXXXXXX`.                               |
 | `pixel`         | `string`   | `""`    | Meta/Facebook Pixel id.                                            |
 | `pixels`        | `string[]` | `[]`    | Raw custom `<script>`/`<img>` snippets.                            |
@@ -83,6 +84,29 @@ In greedy mode only params **before** `r=` are forwarded (everything after `r=`
 is part of the target URL itself). Disable per client with
 `data-we-forward-params="false"`.
 
+The merged query is always well-formed: it starts with a single `?`, and each
+param appears **at most once** (no duplicates). When the same param name exists
+in both the landing-page URL and the destination URL you wrote, the
+**destination's value wins** — a param you deliberately put in the target is
+never clobbered by an incidental same-named param on the landing page.
+
+### Ad-network click ids (always preserved)
+
+Ad platforms append a click id to the URL **at click time**, so its position
+relative to `r=` is out of our control — it can land before or after. These ids
+are therefore preserved onto the target **unconditionally** (even with
+`forwardParams` off, and de-duplicated so they're never doubled):
+
+| Param | Network |
+| --- | --- |
+| `fbclid` | Meta / Facebook |
+| `gclid` | Google Ads (standard click id) |
+| `gbraid` | Google Ads (iOS web→app, privacy-preserving) |
+| `wbraid` | Google Ads (iOS in-app→web, privacy-preserving) |
+
+Override the list with `data-we-preserve="fbclid,gclid"` (comma-separated) or
+`init({ preserve: ['fbclid'] })`. Set it empty to disable.
+
 ### Tracking the redirect itself (opt in)
 
 By default the redirect does **not** fire a pixel — most destinations already
@@ -93,7 +117,7 @@ navigating, waiting `pixelDelay` ms so the beacon flushes.
 
 **Config sources:**
 
-- **Browser/CDN** — read from `data-we-*` attributes on the script tag: `data-we-param`, `data-we-greedy`, `data-we-replace`, `data-we-forward-params`, `data-we-gtm`, `data-we-pixel`, `data-we-pixels` (a JSON array string), `data-we-track-redirect`, `data-we-pixel-delay`, `data-we-debug`.
+- **Browser/CDN** — read from `data-we-*` attributes on the script tag: `data-we-param`, `data-we-greedy`, `data-we-replace`, `data-we-forward-params`, `data-we-preserve` (comma-separated), `data-we-gtm`, `data-we-pixel`, `data-we-pixels` (a JSON array string), `data-we-track-redirect`, `data-we-pixel-delay`, `data-we-debug`.
 - **npm** — passed programmatically to `init(config)`.
 
 ## Build
@@ -113,4 +137,4 @@ npm test           # node --test
 
 ## Status
 
-Implemented and tested — redirect parsing, safe-scheme redirect, and GTM/Pixel/custom tracking injection all work and ship in `dist/`. See `CHANGELOG.md`. Agent/contributor docs live in [.claude/](.claude/).
+**v1.0.0** — stable. Redirect parsing, param forwarding, safe-scheme redirect, optional pre-redirect pixel events, and GTM/Pixel/custom tracking injection all work and ship in `dist/`. The config surface is the stable v1 API. See [CHANGELOG.md](CHANGELOG.md); agent/contributor docs live in [.claude/](.claude/); release steps in [PUBLISHING.md](PUBLISHING.md).

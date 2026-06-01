@@ -71,10 +71,78 @@ Requires the free `whittaker-edwards` npm org to exist before first publish.
 Full reasoning lives in PUBLISHING.md ("Distribution model"). Unscoped public
 (e.g. `we-redirect-js`) was offered as a no-org alternative but not chosen.
 
+## D12 — Track-the-redirect pixel event is OPT-IN (default off)
+
+`trackRedirect` (`data-we-track-redirect`) defaults **false**. Only when on (and
+a `pixel` is set) does the redirect fire a Meta `PageView` + custom `Redirect`
+event (`{ source_url, redirect_url }`) BEFORE navigating. Rationale (client,
+2026-06-01): firing pre-redirect requires a `pixelDelay` (default 120ms) so the
+beacon flushes before navigation cancels it — i.e. it adds latency to the hop.
+Most redirects land on a page that already carries the pixel, so this latency
+should be a deliberate per-client choice, not a default tax. Implemented in
+`firePixelRedirectEvents` (tracking.js) + the delay branch in `maybeRedirect`.
+Two faster alternatives (image-beacon `onload`, fbq callback) were considered
+and rejected as more complexity than warranted.
+
+## D13 — Param forwarding is ON by default (opt OUT)
+
+`forwardParams` (`data-we-forward-params`) defaults **true**: the page's other
+query params (everything except `r`) are appended onto the redirect target so
+UTMs/click-ids survive the hop. Clients opt out with
+`data-we-forward-params="false"`. Note the asymmetry with D12 — forwarding is
+cheap and almost always wanted (attribution), so it's opt-out; pre-redirect pixel
+firing costs latency, so it's opt-in. Greedy-mode caveat: only params BEFORE
+`r=` are forwardable (everything after `r=` is the target URL itself). See
+`collectForwardParams` + `mergeParams` in redirect.js.
+
+## D14 — Ad-network click ids preserved UNCONDITIONALLY
+
+`preserve` (`data-we-preserve`, comma-separated) defaults to
+`['fbclid','gclid','gbraid','wbraid']`. Unlike forwardParams (D13), these are
+carried onto the target **regardless** of forwardParams AND regardless of where
+they sit relative to `r=`. Rationale (client, 2026-06-01): the ad platform
+appends the click id at click time, so its position (before/after `r=`) is out
+of our control, and losing it breaks conversion attribution. Verified via web
+search: Meta uses `fbclid`; Google Ads uses `gclid` plus the iOS-privacy
+identifiers `gbraid` (web→app) and `wbraid` (in-app→web) — one or the other
+appears per click context, so both are preserved.
+
+Implementation notes:
+
+- `findParamValue` locates a param ANYWHERE in `location.search` (incl. after
+  `r=`, where greedy mode would have swallowed it into the target) and returns
+  its LAST occurrence (most-recent wins).
+- `preserveParams` resolves each id's most-recent value and hands it to
+  `mergeParams`, which de-dupes — see D15.
+
+## D15 — Query merge is always well-formed (single `?`, no dupes, destination-wins)
+
+`mergeParams(target, additions)` is the single normalization point for building
+the final redirect URL. Rules (client-confirmed via bug report, 2026-06-01;
+apply to ALL params, not just click ids):
+
+- **Single `?`**: output query always starts with `?`. A greedy-swallowed target
+  like `https://d.com/p&fbclid=1` (no `?`, stray leading `&`) is normalized to
+  `https://d.com/p?fbclid=1`. mergeParams splits the target query at the first
+  `?` OR (if none) the first `&`.
+- **No duplicates**: each key appears at most once. A key duplicated within the
+  target's own query collapses to its LAST value.
+- **Destination wins**: an `addition` (forwarded/preserved source param) only
+  fills a key the target does NOT already have. A value the client deliberately
+  authored into the target URL is never overridden by an incidental same-named
+  landing-page param. (Rejected alternatives: landing-page-wins, and
+  most-recent-by-string-position.)
+
+Bug that drove this: `?fbclid=321&r=https://go.enduramind.net/test&fbclid=123`
+previously produced `...test&fbclid=123?fbclid=321` (stray `&`, duplicate, stale
+value). Now → `...test?fbclid=123`. Regression-locked in redirect.test.js.
+
+Note `collectForwardParams` still slices the before/after-`r=` scope to decide
+WHICH keys to forward, but maybeRedirect re-resolves each forwarded key's VALUE
+via `findParamValue` (whole-query, last-wins) before merging.
+
 ## Open / future considerations
 
 - npm scope `@whittaker-edwards` not yet confirmed as registered/owned (org must
   be created before first publish — see D11).
-- No analytics on redirect events themselves (could fire a pixel pre-redirect if
-  the client later wants attribution on the hop).
 - License is proprietary (`UNLICENSED` in package.json) despite `private: false`.
