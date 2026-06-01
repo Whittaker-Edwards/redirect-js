@@ -56,19 +56,44 @@ init({ param: 'r', gtm: 'GTM-XXXXXXX', pixel: '000000000000000' });
 
 ## Configuration
 
-| Option    | Type       | Default | Description                                                        |
-| --------- | ---------- | ------- | ------------------------------------------------------------------ |
-| `param`   | `string`   | `"r"`   | Query param carrying the target URL.                               |
-| `greedy`  | `boolean`  | `true`  | Capture everything after `param=` as the URL (plain URLs w/ params). |
-| `replace` | `boolean`  | `true`  | Use `location.replace` (no history entry) vs assign.               |
-| `gtm`     | `string`   | `""`    | GTM container id, e.g. `GTM-XXXXXXX`.                               |
-| `pixel`   | `string`   | `""`    | Meta/Facebook Pixel id.                                            |
-| `pixels`  | `string[]` | `[]`    | Raw custom `<script>`/`<img>` snippets.                            |
-| `debug`   | `boolean`  | `false` | Console diagnostics.                                               |
+| Option          | Type       | Default | Description                                                        |
+| --------------- | ---------- | ------- | ------------------------------------------------------------------ |
+| `param`         | `string`   | `"r"`   | Query param carrying the target URL.                               |
+| `greedy`        | `boolean`  | `true`  | Capture everything after `param=` as the URL (plain URLs w/ params). |
+| `replace`       | `boolean`  | `true`  | Use `location.replace` (no history entry) vs assign.               |
+| `forwardParams` | `boolean`  | `true`  | Append the page's OTHER query params (UTMs, click ids, …) onto the redirect target. Opt out with `false`. |
+| `gtm`           | `string`   | `""`    | GTM container id, e.g. `GTM-XXXXXXX`.                               |
+| `pixel`         | `string`   | `""`    | Meta/Facebook Pixel id.                                            |
+| `pixels`        | `string[]` | `[]`    | Raw custom `<script>`/`<img>` snippets.                            |
+| `trackRedirect` | `boolean`  | `false` | Opt in: fire a Meta `PageView` + custom `Redirect` event **before** the redirect (needs `pixel`). Adds `pixelDelay` ms to the hop. |
+| `pixelDelay`    | `number`   | `120`   | Only with `trackRedirect`: ms to wait after firing events so the beacon can flush before navigating. |
+| `debug`         | `boolean`  | `false` | Console diagnostics.                                               |
+
+### Param forwarding (on by default)
+
+Any query params on the landing page other than `r` are carried onto the
+destination, so attribution survives the hop:
+
+```text
+https://landing.example.com/?utm_source=fb&fbclid=abc&r=https://dest.com/offer
+        ─────────────────────────────────────────────►  https://dest.com/offer?utm_source=fb&fbclid=abc
+```
+
+In greedy mode only params **before** `r=` are forwarded (everything after `r=`
+is part of the target URL itself). Disable per client with
+`data-we-forward-params="false"`.
+
+### Tracking the redirect itself (opt in)
+
+By default the redirect does **not** fire a pixel — most destinations already
+carry one. If a client needs the click captured on the redirector, set
+`data-we-track-redirect="true"` (with a `data-we-pixel`). It fires a standard
+`PageView` and a custom `Redirect` event (`{ source_url, redirect_url }`) before
+navigating, waiting `pixelDelay` ms so the beacon flushes.
 
 **Config sources:**
 
-- **Browser/CDN** — read from `data-we-*` attributes on the script tag: `data-we-param`, `data-we-greedy`, `data-we-replace`, `data-we-gtm`, `data-we-pixel`, `data-we-pixels` (a JSON array string), `data-we-debug`.
+- **Browser/CDN** — read from `data-we-*` attributes on the script tag: `data-we-param`, `data-we-greedy`, `data-we-replace`, `data-we-forward-params`, `data-we-gtm`, `data-we-pixel`, `data-we-pixels` (a JSON array string), `data-we-track-redirect`, `data-we-pixel-delay`, `data-we-debug`.
 - **npm** — passed programmatically to `init(config)`.
 
 ## Build
